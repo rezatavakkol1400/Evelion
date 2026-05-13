@@ -1,0 +1,50 @@
+name: Build Evelion CS 1.6 Internal Cheat
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Setup MSVC Developer Command Prompt
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x86
+
+    - name: Download, Find and Inject DirectX 9 Paths
+      shell: powershell
+      run: |
+        Invoke-WebRequest -Uri "https://www.nuget.org/api/v2/package/Microsoft.DXSDK.D3DX/9.29.952.8" -OutFile d3dx9.zip
+        Expand-Archive -Path d3dx9.zip -DestinationPath d3dx9
+        
+        $incPath = (Get-ChildItem -Path .\d3dx9 -Filter "d3dx9.h" -Recurse).Directory.FullName
+        $libPath = (Get-ChildItem -Path .\d3dx9 -Filter "d3dx9.lib" -Recurse | Where-Object { $_.FullName -match "x86" }).Directory.FullName
+        
+        $props = @"
+        <Project>
+          <ItemDefinitionGroup>
+            <ClCompile>
+              <AdditionalIncludeDirectories>$incPath;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+            </ClCompile>
+            <Link>
+              <AdditionalLibraryDirectories>$libPath;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+            </Link>
+          </ItemDefinitionGroup>
+        </Project>
+        "@
+        Set-Content -Path Directory.Build.props -Value $props
+
+    - name: Build the Solution
+      shell: cmd
+      run: msbuild Evelion.sln /p:Configuration=Release /p:Platform=Win32
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: Compiled-Evelion-DLL
+        path: '**/*.dll'
