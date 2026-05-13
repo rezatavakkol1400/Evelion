@@ -1,4 +1,4 @@
-name: Build Evelion CS 1.6 Internal Cheat
+name: Build Evelion CS 1.6 Cheat
 
 on:
   workflow_dispatch:
@@ -39,12 +39,19 @@ jobs:
         "@
         Set-Content -Path Directory.Build.props -Value $props
 
-    - name: Build the Solution
-      shell: cmd
-      run: msbuild Evelion.sln /p:Configuration=Release /p:Platform=Win32
+    - name: Build the Solution (Auto-detect SLN)
+      shell: powershell
+      run: |
+        # پیدا کردن اتوماتیک فایل اصلی پروژه با هر اسمی که دارد
+        $slnFile = Get-ChildItem -Filter *.sln -Recurse | Select-Object -First 1
+        Write-Host "Found Solution File: $($slnFile.Name)"
+        
+        # کامپایل کردن فایلی که پیدا شده
+        msbuild $slnFile.FullName /p:Configuration=Release /p:Platform=x86
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: Compiled-Evelion-DLL
-        path: '**/*.dll'
+        name: Compiled-Evelion-Cheat
+        # چون متوجه شدیم اکسترنال است، دوباره فایل اجرایی را خروجی می‌گیریم
+        path: '**/*.exe'
