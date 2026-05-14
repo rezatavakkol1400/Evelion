@@ -13,57 +13,77 @@
 #include <vector>
 #include <cstring>
 
-
-// initialization
-// ==============
-const auto memory = Memory{ "hl.exe" };
-
-// تعریف متغیرها (مقداردهی اصلی داخل WinMain انجام می‌شود)
+// ==========================================
+// Global Variables Definition
+// ==========================================
 std::uintptr_t hw = 0;
 std::uintptr_t client = 0;
 
 size_t viewMatrixSize = 0x40;
-void* viewMatrixBuffer = malloc(viewMatrixSize);
+void* viewMatrixBuffer = nullptr;
 
 size_t entityListSize = 0x940C;
-void* entityListBuffer = malloc(entityListSize);
+void* entityListBuffer = nullptr;
 
 HWND hwnd1 = NULL;
 int id = 0;
 
-// تابع اسکن معکوس همراه با سیستم هندل کردن ارور داخلی
-std::uintptr_t FindHiddenBase(const Memory& mem, const char* hexPattern, const char* logName) {
-    std::uintptr_t ptr = mem.PatternScan(hexPattern, logName);
+// ایجاد کلاس مموری به صورت سراسری (تا همه توابع به آن دسترسی داشته باشند)
+Memory* memory_ptr = nullptr;
+
+// ==========================================
+// Core Bypass Functions
+// ==========================================
+std::uintptr_t FindHiddenBase(const char* hexPattern, const char* logName) {
+    if (!memory_ptr) return 0;
+    
+    std::uintptr_t ptr = memory_ptr->PatternScan(hexPattern, logName);
     
     if (!ptr) {
         MessageBoxA(nullptr, (std::string("Failed to find pattern for: ") + logName + "\nCheck Evelion_DeepDebug.log").c_str(), "Evelion Bypass Error", MB_OK | MB_ICONERROR);
         exit(0);
     }
     
-    // حرکت به سمت عقب در رم برای پیدا کردن هدر MZ
     std::uintptr_t current = ptr & ~0xFFF;
     for (int i = 0; i < 20000; i++) { 
-        if (current < 0x10000) break; // جلوگیری از کرش
+        if (current < 0x10000) break;
         
-        short magic = mem.Read<short>(current);
-        if (magic == 0x5A4D) { // 0x5A4D == 'MZ'
+        short magic = memory_ptr->Read<short>(current);
+        if (magic == 0x5A4D) { 
             return current;
         }
-        current -= 0x1000; // یک بلوک به عقب برو
+        current -= 0x1000; 
     }
     
     MessageBoxA(nullptr, (std::string("Failed to find MZ Header for: ") + logName + "\nCheck Evelion_DeepDebug.log").c_str(), "Evelion Bypass Error", MB_OK | MB_ICONERROR);
     exit(0);
 }
-// ==============
-// end of initialization
 
+void InitCheat() {
+    // 1. اتصال به بازی
+    memory_ptr = new Memory("hl.exe");
+    
+    // 2. تخصیص حافظه بافرها
+    viewMatrixBuffer = malloc(viewMatrixSize);
+    entityListBuffer = malloc(entityListSize);
+    
+    // 3. پیدا کردن ماژول‌های مخفی (بای‌پس آنتی‌چیت)
+    hw = FindHiddenBase("63 6C 5F 65 6E 74 69 74 79 6C 69 73 74 00", "hw_hidden");
+    client = FindHiddenBase("54 65 61 6D 5F 54 65 72 72 6F 72 69 73 74 00", "client_hidden");
+    
+    // 4. دریافت هندل پنجره بازی
+    hwnd1 = GetProcessHwnd();
+    id = GetWindowThreadProcessId(hwnd1, &Game::PID);
+}
 
+// ==========================================
+// Cheat Logic & ESP Threads
+// ==========================================
 void MatrixUpdate() {
 	while (1) {
 		while (esp) {
-            if (hw) {
-			    memory.ReadHugeMemory(hw + 0xEC9780, viewMatrixBuffer, viewMatrixSize);
+            if (hw && memory_ptr) {
+			    memory_ptr->ReadHugeMemory(hw + 0xEC9780, viewMatrixBuffer, viewMatrixSize);
 			    memcpy(gWorldToScreen, viewMatrixBuffer, sizeof(gWorldToScreen));
             }
 			std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -78,16 +98,16 @@ void OffsetsUpdate() {
 
 	while (1) {
 		while (esp) {
-            if (hw && client) {
-			    memory.ReadHugeMemory(hw + 0x12043CC, entityListBuffer, entityListSize);
+            if (hw && client && memory_ptr) {
+			    memory_ptr->ReadHugeMemory(hw + 0x12043CC, entityListBuffer, entityListSize);
 			    for (int i = 0; i < 64; i++)
 			    {
-				    float playerX = memory.ReadModuleBuffer<float>(entityListBuffer, i * 0x0250 + 0x0184);
+				    float playerX = memory_ptr->ReadModuleBuffer<float>(reinterpret_cast<std::uintptr_t>(entityListBuffer) + i * 0x0250 + 0x0184);
 
 				    if (!playerX) continue;
 
-				    float playerY = memory.ReadModuleBuffer<float>(entityListBuffer, i * 0x0250 + 0x0188);
-				    float playerZ = memory.ReadModuleBuffer<float>(entityListBuffer, i * 0x0250 + 0x018C);
+				    float playerY = memory_ptr->ReadModuleBuffer<float>(reinterpret_cast<std::uintptr_t>(entityListBuffer) + i * 0x0250 + 0x0188);
+				    float playerZ = memory_ptr->ReadModuleBuffer<float>(reinterpret_cast<std::uintptr_t>(entityListBuffer) + i * 0x0250 + 0x018C);
 
 				    Vector3 TargetPos = { playerX , playerY , playerZ };
 				    WorldToScreen(TargetPos, screenPositionTemp);
@@ -98,12 +118,12 @@ void OffsetsUpdate() {
 					    char ch2;
 
 					    do {
-						    ch2 = memory.ReadModuleBuffer<char>(entityListBuffer, modelAddress);
+						    ch2 = memory_ptr->ReadModuleBuffer<char>(reinterpret_cast<std::uintptr_t>(entityListBuffer) + modelAddress);
 						    model.push_back(ch2);
 						    ++modelAddress;
 					    } while (ch2 != '\0');
 
-					    int team = memory.Read<int>(client + 0x100DF4);
+					    int team = memory_ptr->Read<int>(client + 0x100DF4);
 
 					    if ((team == 2 && (model.find("urban") != std::string::npos ||
 						    model.find("gign") != std::string::npos ||
@@ -127,7 +147,7 @@ void OffsetsUpdate() {
 					    char ch1;
 
 					    do {
-						    ch1 = memory.ReadModuleBuffer<char>(entityListBuffer, nameAddress);
+						    ch1 = memory_ptr->ReadModuleBuffer<char>(reinterpret_cast<std::uintptr_t>(entityListBuffer) + nameAddress);
 						    name.push_back(ch1);
 						    ++nameAddress;
 					    } while (ch1 != '\0');
@@ -148,28 +168,30 @@ void DeadCheck() {
 
 	while (1) {
 		while (esp) {
-			for (int i = 0; i < 64; i++)
-			{
-				playerX = memory.ReadModuleBuffer<float>(entityListBuffer, i * 0x0250 + 0x0184);
-				if (!playerX) continue;
+            if (memory_ptr) {
+			    for (int i = 0; i < 64; i++)
+			    {
+				    playerX = memory_ptr->ReadModuleBuffer<float>(reinterpret_cast<std::uintptr_t>(entityListBuffer) + i * 0x0250 + 0x0184);
+				    if (!playerX) continue;
 
-				stateTemp = memory.ReadModuleBuffer<float>(entityListBuffer, i * 0x0250 + 0x017C + 0x1);
-				std::this_thread::sleep_for(std::chrono::milliseconds(10));
+				    stateTemp = memory_ptr->ReadModuleBuffer<float>(reinterpret_cast<std::uintptr_t>(entityListBuffer) + i * 0x0250 + 0x017C + 0x1);
+				    std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
-				if (stateTemp == players[i].state) {
-					if (!players[i].dead) {
-						players[i].screenPosition = 0;
-						players[i].screenPosition = 0;
-						players[i].dead = true;
-					}
-					players[i].state = stateTemp;
-					continue;
-				}
-				else {
-					players[i].dead = false;
-					players[i].state = stateTemp;
-				}
-			}
+				    if (stateTemp == players[i].state) {
+					    if (!players[i].dead) {
+						    players[i].screenPosition = 0;
+						    players[i].screenPosition = 0;
+						    players[i].dead = true;
+					    }
+					    players[i].state = stateTemp;
+					    continue;
+				    }
+				    else {
+					    players[i].dead = false;
+					    players[i].state = stateTemp;
+				    }
+			    }
+            }
 			std::this_thread::sleep_for(std::chrono::milliseconds(1));
 		}
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -179,8 +201,8 @@ void DeadCheck() {
 void LobbyCheck() {
 	while (1) {
 		while (esp) {
-            if (hw) {
-			    int lobby = memory.Read<int>(hw + 0x105CFC8);
+            if (hw && memory_ptr) {
+			    int lobby = memory_ptr->Read<int>(hw + 0x105CFC8);
 
 			    if (!lobby && !in_lobby) {
 				    memset(players, 0, sizeof(players));
@@ -201,8 +223,8 @@ void Draw() {
 		if (enemy_box || enemy_name) {
 			for (int i = 0; i < 64; i++)
 			{
-				int x = players[i].screenPosition;
-				int y = players[i].screenPosition;
+				int x = static_cast<int>(players[i].screenPosition);
+				int y = static_cast<int>(players[i].screenPosition);
 
 				if (players[i].dead || y < 5 || x < 5) continue;
 
@@ -492,12 +514,8 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 		exit(0);
 	}
 
-    // مقداردهی و شکستن آنتی‌چیت دقیقاً در این نقطه ایمن انجام می‌شود!
-    hw = FindHiddenBase(memory, "63 6C 5F 65 6E 74 69 74 79 6C 69 73 74 00", "hw_hidden");
-    client = FindHiddenBase(memory, "54 65 61 6D 5F 54 65 72 72 6F 72 69 73 74 00", "client_hidden");
-
-	hwnd1 = GetProcessHwnd();
-	id = GetWindowThreadProcessId(hwnd1, &Game::PID);
+    // فراخوانی تابع مقداردهی اولیه ما
+    InitCheat();
 
 	GetWindowRect();
 
