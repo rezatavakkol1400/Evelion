@@ -3,110 +3,163 @@
 #include <Windows.h>
 #include <TlHelp32.h>
 #include <string_view>
+#include <vector>
+#include <iostream>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
 
 class Memory
 {
 private:
-	std::uintptr_t processId = 0;
-	void* processHandle = nullptr;
+    std::uintptr_t processId = 0;
+    HANDLE processHandle = nullptr;
+    std::ofstream logFile;
+
+    // تابع داخلی برای نوشتن لاگ‌ها با زمان دقیق
+    void Log(const std::string& message) const {
+        if (logFile.is_open()) {
+            SYSTEMTIME st;
+            GetLocalTime(&st);
+            char timeBuf;
+            sprintf_s(timeBuf, "[%02d:%02d:%02d.%03d] ", st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+            const_cast<std::ofstream&>(logFile) << timeBuf << message << std::endl;
+            const_cast<std::ofstream&>(logFile).flush();
+        }
+    }
 
 public:
-	// Constructor that finds the process id
-	// and opens a handle
-	Memory(std::string_view processName) noexcept
-	{
-		::PROCESSENTRY32 entry = { };
-		entry.dwSize = sizeof(::PROCESSENTRY32);
+    Memory(std::string_view processName) noexcept
+    {
+        // ساخت فایل لاگ در کنار چیت
+        logFile.open("Evelion_DeepDebug.log", std::ios::out | std::ios::trunc);
+        Log("=== EVELION DEEP MEMORY DIAGNOSTIC INITIATED ===");
 
-		const HANDLE snapShot = ::CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        ::PROCESSENTRY32 entry = { };
+        entry.dwSize = sizeof(::PROCESSENTRY32);
+        const HANDLE snapShot = ::CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
 
-		while (::Process32Next(snapShot, &entry))
-		{
-			if (!processName.compare(entry.szExeFile))
-			{
-				processId = entry.th32ProcessID;
-				processHandle = ::OpenProcess(PROCESS_ALL_ACCESS, FALSE, processId);
-				break;
-			}
-		}
+        bool found = false;
+        while (::Process32Next(snapShot, &entry))
+        {
+            if (!processName.compare(entry.szExeFile))
+            {
+                processId = entry.th32ProcessID;
+                processHandle = ::OpenProcess(PROCESS_ALL_ACCESS, FALSE, processId);
+                
+                if (processHandle) {
+                    Log("SUCCESS: Attached to " + std::string(processName) + " (PID: " + std::to_string(processId) + ")");
+                } else {
+                    Log("FATAL: Found process, but OpenProcess failed! Anti-Cheat is actively blocking handle creation. Error Code: " + std::to_string(GetLastError()));
+                }
+                found = true;
+                break;
+            }
+        }
 
-		// Free handle
-		if (snapShot)
-			::CloseHandle(snapShot);
-	}
+        if (!found) Log("ERROR: Process " + std::string(processName) + " not found in Windows Process List.");
+        if (snapShot) ::CloseHandle(snapShot);
+    }
 
-	// Destructor that frees the opened handle
-	~Memory()
-	{
-		if (processHandle)
-			::CloseHandle(processHandle);
-	}
+    ~Memory()
+    {
+        Log("=== DIAGNOSTIC SESSION ENDED ===");
+        if (logFile.is_open()) logFile.close();
+        if (processHandle) ::CloseHandle(processHandle);
+    }
 
-	// Returns the base address of a module by name
-	std::uintptr_t GetModuleAddress(std::string_view moduleName) const noexcept
-	{
-		DWORD_PTR dwModuleBaseAddress = 0;
-		DWORD_PTR result = 0;
+    // این موتور جستجوی جدید و قدرتمند ماست
+    std::uintptr_t PatternScan(const char* signature, const char* name_for_log) const {
+        Log(std::string("--- Starting Deep Scan for: ") + name_for_log + " ---");
+        
+        if (!processHandle) {
+            Log("ABORT: No process handle available.");
+            return 0;
+        }
 
-		HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, processId);
-		if (hSnapshot != INVALID_HANDLE_VALUE)
-		{
-			MODULEENTRY32 ModuleEntry32;
-			ModuleEntry32.dwSize = sizeof(MODULEENTRY32);
-			if (Module32First(hSnapshot, &ModuleEntry32))
-			{
-				do {
-					if (_stricmp(ModuleEntry32.szModule, moduleName.data()) == 0)
-					{
-						dwModuleBaseAddress = reinterpret_cast<DWORD_PTR>(ModuleEntry32.modBaseAddr);
-						result = dwModuleBaseAddress;
-						break;
-					}
-				} while (Module32Next(hSnapshot, &ModuleEntry32));
-			}
-			CloseHandle(hSnapshot);
-		}
-		return result;
-	}
+        // تبدیل پترن به فرمت قابل جستجو
+        std::vector<int> patternBytes;
+        auto bytes = const_cast<char*>(signature);
+        auto start = bytes;
+        auto end = bytes + strlen(signature);
 
-	// Read process memory
-	template <typename T>
-	const T Read(const std::uintptr_t address) const noexcept
-	{
-		T value = { };
-		::ReadProcessMemory(processHandle, reinterpret_cast<const void*>(address), &value, sizeof(T), NULL);
-		return value;
-	}
+        for (auto current = start; current < end; ++current) {
+            if (*current == '?') {
+                ++current;
+                if (*current == '?') ++current;
+                patternBytes.push_back(-1); // -1 یعنی هر بایتی بود قبول کن (Wildcard)
+            } else {
+                patternBytes.push_back(strtoul(current, &current, 16));
+            }
+        }
 
-	// Write process memory
-	template <typename T>
-	void Write(const std::uintptr_t address, const T& value) const noexcept
-	{
-		::WriteProcessMemory(processHandle, reinterpret_cast<void*>(address), &value, sizeof(T), NULL);
-	}
+        // جستجو در کل فضای رم بازی (از آدرس 0 تا 2 گیگابایت)
+        MEMORY_BASIC_INFORMATION mbi;
+        std::uintptr_t currentAddress = 0;
+        size_t bytesRead;
+        std::vector<uint8_t> buffer;
 
-	bool ReadModuleMemory(std::string_view moduleName, void* buffer, size_t size) const noexcept
-	{
-		std::uintptr_t moduleBase = GetModuleAddress(moduleName);
-		if (moduleBase == 0)
-			return false;
+        while (VirtualQueryEx(processHandle, (LPCVOID)currentAddress, &mbi, sizeof(mbi))) {
+            // فقط صفحاتی که مربوط به خود بازی هستن و قابل خوندن هستن رو چک کن
+            if (mbi.State == MEM_COMMIT && mbi.Protect != PAGE_NOACCESS && !(mbi.Protect & PAGE_GUARD)) {
+                
+                buffer.resize(mbi.RegionSize);
+                
+                if (ReadProcessMemory(processHandle, mbi.BaseAddress, buffer.data(), mbi.RegionSize, &bytesRead)) {
+                    
+                    if (bytesRead == 0) {
+                        Log("SUSPICIOUS: ReadProcessMemory succeeded but returned 0 bytes at region: " + std::to_string((std::uintptr_t)mbi.BaseAddress));
+                    } else {
+                        // جستجوی الگو داخل این صفحه از رم
+                        for (size_t i = 0; i < bytesRead - patternBytes.size(); ++i) {
+                            bool found = true;
+                            for (size_t j = 0; j < patternBytes.size(); ++j) {
+                                if (patternBytes[j] != -1 && buffer[i + j] != patternBytes[j]) {
+                                    found = false;
+                                    break;
+                                }
+                            }
+                            if (found) {
+                                std::uintptr_t resultAddr = (std::uintptr_t)mbi.BaseAddress + i;
+                                std::stringstream ss;
+                                ss << std::hex << resultAddr;
+                                Log("BINGO: Pattern [" + std::string(name_for_log) + "] found at Address: 0x" + ss.str());
+                                return resultAddr;
+                            }
+                        }
+                    }
+                } else {
+                    // اینجا مچ آنتی‌چیت گرفته میشه!
+                    DWORD err = GetLastError();
+                    if (err == 299) { // ERROR_PARTIAL_COPY
+                        // این ارور یعنی آنتی چیت یک بایت خاص رو قفل کرده
+                        // Log("INFO: Partial read at region: " + std::to_string((std::uintptr_t)mbi.BaseAddress) + " (Likely Anti-Cheat Page Guarding)");
+                    } else {
+                        Log("WARNING: RPM Failed at region: " + std::to_string((std::uintptr_t)mbi.BaseAddress) + ". Error Code: " + std::to_string(err));
+                    }
+                }
+            }
+            currentAddress = (std::uintptr_t)mbi.BaseAddress + mbi.RegionSize;
+        }
 
-		return ReadProcessMemory(processHandle, reinterpret_cast<const void*>(moduleBase), buffer, size, nullptr) != 0;
-	}
+        Log("FAILED: Pattern [" + std::string(name_for_log) + "] could not be found anywhere in memory.");
+        return 0;
+    }
 
-	bool ReadHugeMemory(std::uintptr_t moduleBase, void* buffer, size_t size) const noexcept
-	{
-		if (moduleBase == 0)
-			return false;
+    // متدهای استاندارد خوندن رم
+    template <typename T>
+    const T Read(const std::uintptr_t address) const noexcept
+    {
+        T value = { };
+        ::ReadProcessMemory(processHandle, reinterpret_cast<const void*>(address), &value, sizeof(T), NULL);
+        return value;
+    }
 
-		return ReadProcessMemory(processHandle, reinterpret_cast<const void*>(moduleBase), buffer, size, nullptr) != 0;
-	}
-
-	template <typename T>
-	const T ReadModuleBuffer(const void* baseAddress, const std::uintptr_t offset) const noexcept
-	{
-		T value = { };
-		::memcpy(&value, reinterpret_cast<const void*>(reinterpret_cast<std::uintptr_t>(baseAddress) + offset), sizeof(T));
-		return value;
-	}
+    // بازنویسی تابع قدیمی برای سازگاری موقت و لاگ‌گیری
+    std::uintptr_t GetModuleAddress(std::string_view moduleName) const noexcept
+    {
+        Log("ATTEMPT: main.cpp requested Module Address for: " + std::string(moduleName));
+        Log("INFO: Returning 0 to force bypass of Windows PEB and move to Pattern Scanning.");
+        return 0; // ما عمداً 0 برمی‌گردونیم تا روش قدیمی غیرفعال بشه
+    }
 };
