@@ -9,7 +9,6 @@
 #include <string>
 #include <iostream>
 #include <cmath>
-#include <math.h>
 #include <vector>
 #include <cstring>
 
@@ -88,8 +87,9 @@ void MatrixUpdate() {
 }
 
 void OffsetsUpdate() {
-    float screenPositionTemp;
-    float stateTemp = 9999;
+    float screenPositionTemp = {0.0f, 0.0f};
+    float* sptr = screenPositionTemp; // رفع ارور WorldToScreen
+    float stateTemp = 9999.0f;
 
     while (1) {
         while (esp) {
@@ -105,7 +105,7 @@ void OffsetsUpdate() {
                     float playerZ = memory_ptr->ReadModuleBuffer<float>(reinterpret_cast<std::uintptr_t>(entityListBuffer) + i * 0x0250 + 0x018C);
 
                     Vector3 TargetPos = { playerX , playerY , playerZ };
-                    WorldToScreen(TargetPos, screenPositionTemp);
+                    WorldToScreen(TargetPos, sptr);
 
                     if (def_models) {
                         uintptr_t modelAddress = i * 0x0250 + 0x012C;
@@ -129,7 +129,9 @@ void OffsetsUpdate() {
                                 model.find("arctic") != std::string::npos ||
                                 model.find("guerilla") != std::string::npos))) {
                             
-                            players[i] = { {0, 0}, 0 };
+                            // رفع ارور تخصیص آرایه MSVC
+                            memset(&players[i], 0, sizeof(PlayerPosition));
+                            players[i].dead = true;
                             continue;
                         }
                     }
@@ -159,7 +161,7 @@ void OffsetsUpdate() {
 }
 
 void DeadCheck() {
-    float stateTemp = 9999;
+    float stateTemp = 9999.0f;
     float playerX;
 
     while (1) {
@@ -175,8 +177,8 @@ void DeadCheck() {
 
                     if (stateTemp == players[i].state) {
                         if (!players[i].dead) {
-                            players[i].screenPosition = 0;
-                            players[i].screenPosition = 0;
+                            players[i].screenPosition = 0.0f;
+                            players[i].screenPosition = 0.0f;
                             players[i].dead = true;
                         }
                         players[i].state = stateTemp;
@@ -219,8 +221,11 @@ void Draw() {
         if (enemy_box || enemy_name) {
             for (int i = 0; i < 64; i++)
             {
-                int x = players[i].screenPosition;
-                int y = players[i].screenPosition;
+                // رفع ارور Float to Int
+                float px = players[i].screenPosition;
+                float py = players[i].screenPosition;
+                int x = static_cast<int>(px);
+                int y = static_cast<int>(py);
 
                 if (players[i].dead || y < 5 || x < 5) continue;
 
@@ -259,18 +264,23 @@ void DrawMenu() {
     if (ImGui::BeginPopup("Box Color")) {
         ImGui::PushItemWidth(100);
         ImGui::ColorPicker3("Box", boxTemp);
-        BoxColor.R = static_cast<int>(boxTemp * 255);
-        BoxColor.G = static_cast<int>(boxTemp * 255);
-        BoxColor.B = static_cast<int>(boxTemp * 255);
+        
+        // رفع ارور Float
+        float* bT = reinterpret_cast<float*>(boxTemp);
+        BoxColor.R = static_cast<int>(bT * 255.0f);
+        BoxColor.G = static_cast<int>(bT * 255.0f);
+        BoxColor.B = static_cast<int>(bT * 255.0f);
         BoxColor.A = 255;
         ImGui::EndPopup();
     }
     if (ImGui::BeginPopup("Name Color")) {
         ImGui::PushItemWidth(100);
         ImGui::ColorPicker3("Name", nameTemp);
-        NameColor.R = static_cast<int>(nameTemp * 255);
-        NameColor.G = static_cast<int>(nameTemp * 255);
-        NameColor.B = static_cast<int>(nameTemp * 255);
+        
+        float* nT = reinterpret_cast<float*>(nameTemp);
+        NameColor.R = static_cast<int>(nT * 255.0f);
+        NameColor.G = static_cast<int>(nT * 255.0f);
+        NameColor.B = static_cast<int>(nT * 255.0f);
         NameColor.A = 255;
         ImGui::EndPopup();
     }
@@ -352,22 +362,23 @@ void MainLoop() {
 
         TempRect.left = TempPoint.x;
         TempRect.top = TempPoint.y;
-        ImGuiIO& io = ImGui::GetIO();
-        io.ImeWindowHandle = Process::Hwnd;
+        
+        ImGui::GetIO().ImeWindowHandle = Process::Hwnd;
 
         POINT TempPoint2;
         GetCursorPos(&TempPoint2);
-        io.MousePos.x = TempPoint2.x - TempPoint.x;
-        io.MousePos.y = TempPoint2.y - TempPoint.y;
+        ImGui::GetIO().MousePos.x = TempPoint2.x - TempPoint.x;
+        ImGui::GetIO().MousePos.y = TempPoint2.y - TempPoint.y;
 
-        if (GetAsyncKeyState(0x1)) {
-            io.MouseDown = true;
-            io.MouseClicked = true;
-            io.MouseClickedPos.x = io.MousePos.x;
-            io.MouseClickedPos.y = io.MousePos.y;
+        // رفع ارور Bool
+        if (GetAsyncKeyState(VK_LBUTTON)) {
+            ImGui::GetIO().MouseDown = true;
+            ImGui::GetIO().MouseClicked = true;
+            ImGui::GetIO().MouseClickedPos.x = ImGui::GetIO().MousePos.x;
+            ImGui::GetIO().MouseClickedPos.y = ImGui::GetIO().MousePos.y;
         }
         else {
-            io.MouseDown = false;
+            ImGui::GetIO().MouseDown = false;
         }
 
         if (TempRect.left != OldRect.left || TempRect.right != OldRect.right || TempRect.top != OldRect.top || TempRect.bottom != OldRect.bottom) {
