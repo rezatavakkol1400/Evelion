@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+#include <cstdio> // اضافه شدن برای حل مشکل لاگر
 
 class Memory
 {
@@ -16,14 +17,14 @@ private:
     HANDLE processHandle = nullptr;
     std::ofstream logFile;
 
-    // تابع داخلی برای نوشتن لاگ‌ها با زمان دقیق
+    // سیستم لاگ‌نویسی پیشرفته با سینتکس ایمن مایکروسافت
     void Log(const std::string& message) const {
         if (logFile.is_open()) {
             SYSTEMTIME st;
             GetLocalTime(&st);
             char timeBuf;
-            // رفع ارور سینتکس کامپایلر با استفاده از snprintf
-            snprintf(timeBuf, sizeof(timeBuf), "[%02d:%02d:%02d.%03d] ", st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+            // حل ارور امنیتی رشته‌ها در MSVC
+            sprintf_s(timeBuf, sizeof(timeBuf), "[%02d:%02d:%02d.%03d] ", st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
             const_cast<std::ofstream&>(logFile) << timeBuf << message << std::endl;
             const_cast<std::ofstream&>(logFile).flush();
         }
@@ -93,7 +94,7 @@ public:
 
         MEMORY_BASIC_INFORMATION mbi;
         std::uintptr_t currentAddress = 0;
-        SIZE_T bytesRead; // رفع ارور SIZE_T ویندوز
+        SIZE_T bytesRead; 
         std::vector<uint8_t> buffer;
 
         while (VirtualQueryEx(processHandle, (LPCVOID)currentAddress, &mbi, sizeof(mbi))) {
@@ -146,7 +147,7 @@ public:
     }
 
     // ==========================================
-    // توابع گم‌شده که برای فایل main.cpp حیاتی هستند برگردانده شدند
+    // توابع حیاتی و Overload شده برای جلوگیری از ارور C2672
     // ==========================================
 
     bool ReadModuleMemory(std::string_view moduleName, void* buffer, size_t size) const noexcept
@@ -162,11 +163,35 @@ public:
         return ::ReadProcessMemory(processHandle, reinterpret_cast<const void*>(moduleBase), buffer, size, nullptr) != 0;
     }
 
+    // حالت اول: فقط آدرس داده شود
     template <typename T>
     const T ReadModuleBuffer(const std::uintptr_t address) const noexcept
     {
         T value = { };
         ::ReadProcessMemory(processHandle, reinterpret_cast<const void*>(address), &value, sizeof(T), NULL);
+        return value;
+    }
+
+    // حالت دوم: آدرس پایه و آفست داده شود
+    template <typename T>
+    const T ReadModuleBuffer(const std::uintptr_t base, const std::uintptr_t offset) const noexcept
+    {
+        T value = { };
+        if (base) {
+            ::ReadProcessMemory(processHandle, reinterpret_cast<const void*>(base + offset), &value, sizeof(T), NULL);
+        }
+        return value;
+    }
+
+    // حالت سوم: اسم ماژول و آفست داده شود
+    template <typename T>
+    const T ReadModuleBuffer(std::string_view moduleName, const std::uintptr_t offset) const noexcept
+    {
+        T value = { };
+        std::uintptr_t base = GetModuleAddress(moduleName);
+        if (base) {
+            ::ReadProcessMemory(processHandle, reinterpret_cast<const void*>(base + offset), &value, sizeof(T), NULL);
+        }
         return value;
     }
 
