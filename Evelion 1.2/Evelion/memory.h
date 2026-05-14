@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+#include <cstdio>
 
 class Memory
 {
@@ -16,7 +17,7 @@ private:
     HANDLE processHandle = nullptr;
     std::ofstream logFile;
 
-    // Use std::ostringstream to safely format the time, avoiding sprintf_s compiler errors
+    // سیستم لاگر ایمن برای دیباگینگ هسته
     void Log(const std::string& message) const {
         if (logFile.is_open()) {
             SYSTEMTIME st;
@@ -153,7 +154,7 @@ public:
     }
 
     // ==========================================
-    // Core Functions needed by main.cpp
+    // توابع حیاتی و Overload شده برای پوشش دادن تمام تماس‌های main.cpp
     // ==========================================
 
     bool ReadModuleMemory(std::string_view moduleName, void* buffer, size_t size) const noexcept
@@ -169,12 +170,35 @@ public:
         return ::ReadProcessMemory(processHandle, reinterpret_cast<const void*>(moduleBase), buffer, size, nullptr) != 0;
     }
 
-    // Generic ReadModuleBuffer matching the expected signature in Evelion
+    // حالت اول: فراخوانی فقط با یک آدرس (1 Argument)
     template <typename T>
-    const T ReadModuleBuffer(std::uintptr_t address) const noexcept
+    const T ReadModuleBuffer(const std::uintptr_t address) const noexcept
     {
         T value = { };
         ::ReadProcessMemory(processHandle, reinterpret_cast<const void*>(address), &value, sizeof(T), NULL);
+        return value;
+    }
+
+    // حالت دوم: فراخوانی با آدرس پایه و آفست (2 Arguments - Pointers/Integers)
+    template <typename T>
+    const T ReadModuleBuffer(const std::uintptr_t base, const std::uintptr_t offset) const noexcept
+    {
+        T value = { };
+        if (base) {
+            ::ReadProcessMemory(processHandle, reinterpret_cast<const void*>(base + offset), &value, sizeof(T), NULL);
+        }
+        return value;
+    }
+
+    // حالت سوم: فراخوانی با اسم فایل و آفست (2 Arguments - String & Integer)
+    template <typename T>
+    const T ReadModuleBuffer(const char* moduleName, const std::uintptr_t offset) const noexcept
+    {
+        T value = { };
+        std::uintptr_t base = GetModuleAddress(moduleName);
+        if (base) {
+            ::ReadProcessMemory(processHandle, reinterpret_cast<const void*>(base + offset), &value, sizeof(T), NULL);
+        }
         return value;
     }
 
