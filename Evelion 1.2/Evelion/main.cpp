@@ -7,7 +7,7 @@
 #include <TlHelp32.h>
 #include <thread>
 #include <string>
-#include "iostream"
+#include <iostream>
 #include <cmath>
 #include <math.h>
 #include <vector>
@@ -17,6 +17,19 @@
 // initialization
 // ==============
 const auto memory = Memory{ "hl.exe" };
+
+// تعریف متغیرها (مقداردهی اصلی داخل WinMain انجام می‌شود)
+std::uintptr_t hw = 0;
+std::uintptr_t client = 0;
+
+size_t viewMatrixSize = 0x40;
+void* viewMatrixBuffer = malloc(viewMatrixSize);
+
+size_t entityListSize = 0x940C;
+void* entityListBuffer = malloc(entityListSize);
+
+HWND hwnd1 = NULL;
+int id = 0;
 
 // تابع اسکن معکوس همراه با سیستم هندل کردن ارور داخلی
 std::uintptr_t FindHiddenBase(const Memory& mem, const char* hexPattern, const char* logName) {
@@ -42,172 +55,111 @@ std::uintptr_t FindHiddenBase(const Memory& mem, const char* hexPattern, const c
     MessageBoxA(nullptr, (std::string("Failed to find MZ Header for: ") + logName + "\nCheck Evelion_DeepDebug.log").c_str(), "Evelion Bypass Error", MB_OK | MB_ICONERROR);
     exit(0);
 }
-
-// پیدا کردن hw.dll 
-const auto hw = FindHiddenBase(memory, "63 6C 5F 65 6E 74 69 74 79 6C 69 73 74 00", "hw_hidden");
-
-// پیدا کردن client.dll
-const auto client = FindHiddenBase(memory, "54 65 61 6D 5F 54 65 72 72 6F 72 69 73 74 00", "client_hidden");
-
-size_t viewMatrixSize = 0x40;
-void* viewMatrixBuffer = malloc(viewMatrixSize);
-
-size_t entityListSize = 0x940C;
-void* entityListBuffer = malloc(entityListSize);
-
-HWND hwnd1;
-int id = GetWindowThreadProcessId(hwnd1, &Game::PID);
 // ==============
 // end of initialization
 
-size_t viewMatrixSize = 0x40;
-void* viewMatrixBuffer = malloc(viewMatrixSize);
-
-size_t entityListSize = 0x940C;
-void* entityListBuffer = malloc(entityListSize);
-
-HWND hwnd1;
-int id = GetWindowThreadProcessId(hwnd1, &Game::PID);
-// ==============
-// end of initialization
-
-
-// not working concept, i'll leave it here for future edit :(
-/*
-void GetPlayersCount() {
-
-	uintptr_t startAddress = libcef + 0x0B5B8A8;
-	int pointer = memory.Read<int>(startAddress);
-
-	std::stringstream temp;
-	temp << std::hex << pointer;
-
-	uintptr_t hexValue;
-	temp >> hexValue;
-
-	std::cout << "First: 0x" << std::hex << hexValue << std::endl;
-
-	uintptr_t finalAddress = hexValue + 0x548;
-
-	std::cout << "Final: 0x" << std::hex << finalAddress << std::endl;
-	playersCount = memory.Read<int>(finalAddress);
-
-	std::cout << "Count: " << playersCount << std::endl;
-}
-*/
 
 void MatrixUpdate() {
-
 	while (1) {
 		while (esp) {
-
-			memory.ReadHugeMemory(hw + 0xEC9780, viewMatrixBuffer, viewMatrixSize);
-			memcpy(gWorldToScreen, viewMatrixBuffer, sizeof(gWorldToScreen));
+            if (hw) {
+			    memory.ReadHugeMemory(hw + 0xEC9780, viewMatrixBuffer, viewMatrixSize);
+			    memcpy(gWorldToScreen, viewMatrixBuffer, sizeof(gWorldToScreen));
+            }
 			std::this_thread::sleep_for(std::chrono::milliseconds(1));
 		}
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
 	}
 }
 
 void OffsetsUpdate() {
-
-	float screenPositionTemp[2];
+	float screenPositionTemp;
 	float stateTemp = 9999;
 
 	while (1) {
 		while (esp) {
+            if (hw && client) {
+			    memory.ReadHugeMemory(hw + 0x12043CC, entityListBuffer, entityListSize);
+			    for (int i = 0; i < 64; i++)
+			    {
+				    float playerX = memory.ReadModuleBuffer<float>(entityListBuffer, i * 0x0250 + 0x0184);
 
-			memory.ReadHugeMemory(hw + 0x12043CC, entityListBuffer, entityListSize);
-			for (int i = 0; i < 64; i++)
-			{
+				    if (!playerX) continue;
 
-				float playerX = memory.ReadModuleBuffer<float>(entityListBuffer, i * 0x0250 + 0x0184);
+				    float playerY = memory.ReadModuleBuffer<float>(entityListBuffer, i * 0x0250 + 0x0188);
+				    float playerZ = memory.ReadModuleBuffer<float>(entityListBuffer, i * 0x0250 + 0x018C);
 
-				if (!playerX) continue;
+				    Vector3 TargetPos = { playerX , playerY , playerZ };
+				    WorldToScreen(TargetPos, screenPositionTemp);
 
-				float playerY = memory.ReadModuleBuffer<float>(entityListBuffer, i * 0x0250 + 0x0188);
-				float playerZ = memory.ReadModuleBuffer<float>(entityListBuffer, i * 0x0250 + 0x018C);
+				    if (def_models) {
+					    uintptr_t modelAddress = i * 0x0250 + 0x012C;
+					    std::string model;
+					    char ch2;
 
-				Vector3 TargetPos = { playerX , playerY , playerZ };
+					    do {
+						    ch2 = memory.ReadModuleBuffer<char>(entityListBuffer, modelAddress);
+						    model.push_back(ch2);
+						    ++modelAddress;
+					    } while (ch2 != '\0');
 
-				WorldToScreen(TargetPos, screenPositionTemp);
+					    int team = memory.Read<int>(client + 0x100DF4);
 
-				if (def_models) {
-					uintptr_t modelAddress = i * 0x0250 + 0x012C;
-					std::string model;
-					char ch2;
+					    if ((team == 2 && (model.find("urban") != std::string::npos ||
+						    model.find("gign") != std::string::npos ||
+						    model.find("gsg9") != std::string::npos ||
+						    model.find("sas") != std::string::npos)) ||
+						    (team == 1 && (model.find("terror") != std::string::npos ||
+							    model.find("leet") != std::string::npos ||
+							    model.find("arctic") != std::string::npos ||
+							    model.find("guerilla") != std::string::npos))) {
+						    players[i] = { {0, 0}, 0 };
+						    continue;
+					    }
+				    }
 
-					do {
-						ch2 = memory.ReadModuleBuffer<char>(entityListBuffer, modelAddress);
-						model.push_back(ch2);
-						++modelAddress;
-					} while (ch2 != '\0');
+				    players[i].screenPosition = screenPositionTemp; 
+				    players[i].screenPosition = screenPositionTemp;
 
+				    if (enemy_name) {
+					    std::string name;
+					    uintptr_t nameAddress = i * 0x0250 + 0x0100;
+					    char ch1;
 
-					int team = memory.Read<int>(client + 0x100DF4);
-
-					if ((team == 2 && (model.find("urban") != std::string::npos ||
-						model.find("gign") != std::string::npos ||
-						model.find("gsg9") != std::string::npos ||
-						model.find("sas") != std::string::npos)) ||
-						(team == 1 && (model.find("terror") != std::string::npos ||
-							model.find("leet") != std::string::npos ||
-							model.find("arctic") != std::string::npos ||
-							model.find("guerilla") != std::string::npos))) {
-						players[i] = { {0, 0}, 0 };
-						continue;
-					}
-
-				}
-
-				players[i].screenPosition[0] = screenPositionTemp[0]; 
-				players[i].screenPosition[1] = screenPositionTemp[1];
-
-				if (enemy_name) {
-					std::string name;
-					uintptr_t nameAddress = i * 0x0250 + 0x0100;
-					char ch1;
-
-					do {
-						ch1 = memory.ReadModuleBuffer<char>(entityListBuffer, nameAddress);
-						name.push_back(ch1);
-						++nameAddress;
-					} while (ch1 != '\0');
-					
-					players[i].name = name;
-				}
-
-			}
+					    do {
+						    ch1 = memory.ReadModuleBuffer<char>(entityListBuffer, nameAddress);
+						    name.push_back(ch1);
+						    ++nameAddress;
+					    } while (ch1 != '\0');
+					    
+					    players[i].name = name;
+				    }
+			    }
+            }
 			std::this_thread::sleep_for(std::chrono::milliseconds(1));
 		}
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	}
-
 }
 
 void DeadCheck() {
-
 	float stateTemp = 9999;
 	float playerX;
 
 	while (1) {
 		while (esp) {
-
 			for (int i = 0; i < 64; i++)
 			{
 				playerX = memory.ReadModuleBuffer<float>(entityListBuffer, i * 0x0250 + 0x0184);
-
 				if (!playerX) continue;
 
 				stateTemp = memory.ReadModuleBuffer<float>(entityListBuffer, i * 0x0250 + 0x017C + 0x1);
-
 				std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
 				if (stateTemp == players[i].state) {
 					if (!players[i].dead) {
-						players[i].screenPosition[0] = 0;
-						players[i].screenPosition[1] = 0;
+						players[i].screenPosition = 0;
+						players[i].screenPosition = 0;
 						players[i].dead = true;
 					}
 					players[i].state = stateTemp;
@@ -217,76 +169,66 @@ void DeadCheck() {
 					players[i].dead = false;
 					players[i].state = stateTemp;
 				}
-
 			}
 			std::this_thread::sleep_for(std::chrono::milliseconds(1));
 		}
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	}
-
 }
 
 void LobbyCheck() {
-
 	while (1) {
 		while (esp) {
-			int lobby = memory.Read<int>(hw + 0x105CFC8);
+            if (hw) {
+			    int lobby = memory.Read<int>(hw + 0x105CFC8);
 
-			if (!lobby && !in_lobby) {
-				memset(players, 0, sizeof(players));
-				in_lobby = true;
-			}
-			else if (lobby) {
-				in_lobby = false;
-			}
+			    if (!lobby && !in_lobby) {
+				    memset(players, 0, sizeof(players));
+				    in_lobby = true;
+			    }
+			    else if (lobby) {
+				    in_lobby = false;
+			    }
+            }
 			std::this_thread::sleep_for(std::chrono::milliseconds(100));
 		}
-
 		std::this_thread::sleep_for(std::chrono::milliseconds(250));
 	}
 }
 
 void Draw() {
 	if (esp) {
-
 		if (enemy_box || enemy_name) {
 			for (int i = 0; i < 64; i++)
 			{
-				int x = players[i].screenPosition[0];
-				int y = players[i].screenPosition[1];
+				int x = players[i].screenPosition;
+				int y = players[i].screenPosition;
 
 				if (players[i].dead || y < 5 || x < 5) continue;
 
 				if (enemy_box) DrawCircleFilled(x, y, 2.5, &BoxColor);
-
 				if (enemy_name) DrawNewText(x - 14, y - 32, &NameColor, players[i].name.c_str());
-
 			}
 		}
 	}
-
 }
 
 void DrawMenu() {
 	ImGui::SetNextWindowSize(ImVec2(400.f, 200.f));
-	
 	ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.0f);
-
-	ImGui::Begin("Evelion", NULL, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
+	ImGui::Begin("Evelion Bypass", NULL, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
 
 	ImGui::Checkbox("Esp", &esp);
 	ImGui::Separator();
 	ImGui::Checkbox("Box", &enemy_box);
 	ImGui::SameLine();
 	ImGui::Checkbox("Name", &enemy_name);
-	ImGui::SameLine();
 
 	ImGui::Spacing(), ImGui::Spacing(), ImGui::Spacing(), ImGui::Spacing();
 
 	ImGui::Checkbox("Show Only Enemies", &def_models);
 	ImGui::SameLine();
 	ImGui::Text("(only works with default models)");
-	//ImGui::SameLine();
 
 	if (ImGui::Button("Change Box Color")) {
 		ImGui::OpenPopup("Box Color");
@@ -299,18 +241,18 @@ void DrawMenu() {
 	if (ImGui::BeginPopup("Box Color")) {
 		ImGui::PushItemWidth(100);
 		ImGui::ColorPicker3("Box", boxTemp);
-		BoxColor.R = static_cast<int>(boxTemp[0] * 255);
-		BoxColor.G = static_cast<int>(boxTemp[1] * 255);
-		BoxColor.B = static_cast<int>(boxTemp[2] * 255);
+		BoxColor.R = static_cast<int>(boxTemp * 255);
+		BoxColor.G = static_cast<int>(boxTemp * 255);
+		BoxColor.B = static_cast<int>(boxTemp * 255);
 		BoxColor.A = 255;
 		ImGui::EndPopup();
 	}
 	if (ImGui::BeginPopup("Name Color")) {
 		ImGui::PushItemWidth(100);
 		ImGui::ColorPicker3("Name", nameTemp);
-		NameColor.R = static_cast<int>(nameTemp[0] * 255);
-		NameColor.G = static_cast<int>(nameTemp[1] * 255);
-		NameColor.B = static_cast<int>(nameTemp[2] * 255);
+		NameColor.R = static_cast<int>(nameTemp * 255);
+		NameColor.G = static_cast<int>(nameTemp * 255);
+		NameColor.B = static_cast<int>(nameTemp * 255);
 		NameColor.A = 255;
 		ImGui::EndPopup();
 	}
@@ -321,15 +263,13 @@ void DrawMenu() {
 		Unhook = true;
 	}
 
-	ImGui::Text("Version 1.2 by Zebra");
-
+	ImGui::Text("Evelion Base - Bypassed Version");
 	ImGui::End();
 }
 
 void Render() {
 	if (GetAsyncKeyState(VK_DELETE) & 1) Unhook = true;
 	if (GetAsyncKeyState(VK_INSERT) & 1) ShowMenu = !ShowMenu;
-	//if (GetAsyncKeyState(VK_END) & 1) enemy_box = !enemy_box;
 
 	ImGui_ImplDX9_NewFrame();
 	ImGui_ImplWin32_NewFrame();
@@ -403,13 +343,13 @@ void MainLoop() {
 		io.MousePos.y = TempPoint2.y - TempPoint.y;
 
 		if (GetAsyncKeyState(0x1)) {
-			io.MouseDown[0] = true;
-			io.MouseClicked[0] = true;
-			io.MouseClickedPos[0].x = io.MousePos.x;
-			io.MouseClickedPos[0].x = io.MousePos.y;
+			io.MouseDown = true;
+			io.MouseClicked = true;
+			io.MouseClickedPos.x = io.MousePos.x;
+			io.MouseClickedPos.y = io.MousePos.y;
 		}
 		else {
-			io.MouseDown[0] = false;
+			io.MouseDown = false;
 		}
 
 		if (TempRect.left != OldRect.left || TempRect.right != OldRect.right || TempRect.top != OldRect.top || TempRect.bottom != OldRect.bottom) {
@@ -453,7 +393,6 @@ bool DirectXInit() {
 	Params.PresentationInterval = D3DPRESENT_INTERVAL_ONE;
 	Params.EnableAutoDepthStencil = TRUE;
 	Params.AutoDepthStencilFormat = D3DFMT_D16;
-	Params.PresentationInterval = D3DPRESENT_INTERVAL_ONE;
 	Params.FullScreen_RefreshRateInHz = D3DPRESENT_RATE_DEFAULT;
 
 	if (FAILED(DirectX9Interface::Direct3D9->CreateDeviceEx(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, OverlayWindow::Hwnd, D3DCREATE_HARDWARE_VERTEXPROCESSING, &Params, 0, &DirectX9Interface::pDevice))) {
@@ -530,7 +469,6 @@ void SetupWindow() {
 }
 
 void GetWindowRect() {
-
 	RECT clientRect;
 	if (GetClientRect(hwnd1, &clientRect)) {
 		int clientWidth = clientRect.right - clientRect.left;
@@ -545,27 +483,25 @@ void GetWindowRect() {
 	}
 }
 
-
 int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
-//int main() {
 	bool WindowFocus = false;
-	setlocale(LC_ALL, "Russian"); // maybe can fix problem with russian nicknames displaying in esp
+	setlocale(LC_ALL, "Russian"); 
 
 	if (!IsProcessAlive("hl.exe")) {
 		MessageBox(nullptr, "Please run game before running Evelion!", "Evelion", MB_OK);
 		exit(0);
 	}
 
+    // مقداردهی و شکستن آنتی‌چیت دقیقاً در این نقطه ایمن انجام می‌شود!
+    hw = FindHiddenBase(memory, "63 6C 5F 65 6E 74 69 74 79 6C 69 73 74 00", "hw_hidden");
+    client = FindHiddenBase(memory, "54 65 61 6D 5F 54 65 72 72 6F 72 69 73 74 00", "client_hidden");
+
 	hwnd1 = GetProcessHwnd();
-
 	id = GetWindowThreadProcessId(hwnd1, &Game::PID);
-
-	//GetPlayersCount();
 
 	GetWindowRect();
 
 	std::thread aliveThread(ProcessAlive);
-
 	std::thread matrixThread(MatrixUpdate);
 	std::thread updateThread(OffsetsUpdate);
 	std::thread deadThread(DeadCheck);
