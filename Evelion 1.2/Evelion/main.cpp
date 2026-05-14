@@ -16,43 +16,51 @@
 
 // initialization
 // ==============
-// initialization
+// initialization0000
 // ==============
 const auto memory = Memory{ "hl.exe" };
 
-// تابع اسکن معکوس برای پیدا کردن ماژول‌های مخفی شده
+// تابع اسکن معکوس همراه با سیستم هندل کردن ارور داخلی
 std::uintptr_t FindHiddenBase(const Memory& mem, const char* hexPattern, const char* logName) {
     std::uintptr_t ptr = mem.PatternScan(hexPattern, logName);
-    if (!ptr) return 0; // اگر الگو پیدا نشد
     
-    // حرکت به سمت عقب در رم (بلوک‌های 4096 بایتی) برای پیدا کردن هدر MZ
+    if (!ptr) {
+        MessageBoxA(nullptr, (std::string("Failed to find pattern for: ") + logName + "\nCheck Evelion_DeepDebug.log").c_str(), "Evelion Bypass Error", MB_OK | MB_ICONERROR);
+        exit(0);
+    }
+    
+    // حرکت به سمت عقب در رم برای پیدا کردن هدر MZ
     std::uintptr_t current = ptr & ~0xFFF;
-    for (int i = 0; i < 20000; i++) { // جستجو تا 80 مگابایت به عقب
+    for (int i = 0; i < 20000; i++) { 
         if (current < 0x10000) break; // جلوگیری از کرش
         
-        // خواندن 2 بایت برای بررسی هدر برنامه (MZ = 0x5A4D)
         short magic = mem.Read<short>(current);
-        if (magic == 0x5A4D) { 
-            std::cout << "[+] Hidden Module Base Found: 0x" << std::hex << current << std::endl;
+        if (magic == 0x5A4D) { // 0x5A4D == 'MZ'
             return current;
         }
         current -= 0x1000; // یک بلوک به عقب برو
     }
-    return 0;
-}
-
-// پیدا کردن hw.dll با استفاده از استرینگ "cl_entitylist" (Hex)
-const auto hw = FindHiddenBase(memory, "63 6C 5F 65 6E 74 69 74 79 6C 69 73 74 00", "hw.dll_hidden_string");
-
-// پیدا کردن client.dll با استفاده از استرینگ "Team_Terrorist" (Hex)
-const auto client = FindHiddenBase(memory, "54 65 61 6D 5F 54 65 72 72 6F 72 69 73 74 00", "client.dll_hidden_string");
-
-// اگر موفق نشدیم آنتی‌چیت را بشکنیم، با پیام خطا خارج می‌شویم (جلوگیری از کرش)
-if (!hw || !client) {
-    MessageBox(nullptr, "Failed to find hidden modules. Check Evelion_DeepDebug.log", "Evelion Bypass", MB_OK | MB_ICONERROR);
+    
+    MessageBoxA(nullptr, (std::string("Failed to find MZ Header for: ") + logName + "\nCheck Evelion_DeepDebug.log").c_str(), "Evelion Bypass Error", MB_OK | MB_ICONERROR);
     exit(0);
 }
-// =========================
+
+// پیدا کردن hw.dll 
+const auto hw = FindHiddenBase(memory, "63 6C 5F 65 6E 74 69 74 79 6C 69 73 74 00", "hw_hidden");
+
+// پیدا کردن client.dll
+const auto client = FindHiddenBase(memory, "54 65 61 6D 5F 54 65 72 72 6F 72 69 73 74 00", "client_hidden");
+
+size_t viewMatrixSize = 0x40;
+void* viewMatrixBuffer = malloc(viewMatrixSize);
+
+size_t entityListSize = 0x940C;
+void* entityListBuffer = malloc(entityListSize);
+
+HWND hwnd1;
+int id = GetWindowThreadProcessId(hwnd1, &Game::PID);
+// ==============
+// end of initialization0000
 
 size_t viewMatrixSize = 0x40;
 void* viewMatrixBuffer = malloc(viewMatrixSize);
