@@ -22,7 +22,8 @@ private:
             SYSTEMTIME st;
             GetLocalTime(&st);
             char timeBuf;
-            sprintf_s(timeBuf, "[%02d:%02d:%02d.%03d] ", st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+            // رفع ارور سینتکس کامپایلر با استفاده از snprintf
+            snprintf(timeBuf, sizeof(timeBuf), "[%02d:%02d:%02d.%03d] ", st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
             const_cast<std::ofstream&>(logFile) << timeBuf << message << std::endl;
             const_cast<std::ofstream&>(logFile).flush();
         }
@@ -31,7 +32,6 @@ private:
 public:
     Memory(std::string_view processName) noexcept
     {
-        // ساخت فایل لاگ در کنار چیت
         logFile.open("Evelion_DeepDebug.log", std::ios::out | std::ios::trunc);
         Log("=== EVELION DEEP MEMORY DIAGNOSTIC INITIATED ===");
 
@@ -68,7 +68,6 @@ public:
         if (processHandle) ::CloseHandle(processHandle);
     }
 
-    // این موتور جستجوی جدید و قدرتمند ماست
     std::uintptr_t PatternScan(const char* signature, const char* name_for_log) const {
         Log(std::string("--- Starting Deep Scan for: ") + name_for_log + " ---");
         
@@ -77,7 +76,6 @@ public:
             return 0;
         }
 
-        // تبدیل پترن به فرمت قابل جستجو
         std::vector<int> patternBytes;
         auto bytes = const_cast<char*>(signature);
         auto start = bytes;
@@ -87,20 +85,18 @@ public:
             if (*current == '?') {
                 ++current;
                 if (*current == '?') ++current;
-                patternBytes.push_back(-1); // -1 یعنی هر بایتی بود قبول کن (Wildcard)
+                patternBytes.push_back(-1); 
             } else {
                 patternBytes.push_back(strtoul(current, &current, 16));
             }
         }
 
-        // جستجو در کل فضای رم بازی (از آدرس 0 تا 2 گیگابایت)
         MEMORY_BASIC_INFORMATION mbi;
         std::uintptr_t currentAddress = 0;
-        size_t bytesRead;
+        SIZE_T bytesRead; // رفع ارور SIZE_T ویندوز
         std::vector<uint8_t> buffer;
 
         while (VirtualQueryEx(processHandle, (LPCVOID)currentAddress, &mbi, sizeof(mbi))) {
-            // فقط صفحاتی که مربوط به خود بازی هستن و قابل خوندن هستن رو چک کن
             if (mbi.State == MEM_COMMIT && mbi.Protect != PAGE_NOACCESS && !(mbi.Protect & PAGE_GUARD)) {
                 
                 buffer.resize(mbi.RegionSize);
@@ -110,7 +106,6 @@ public:
                     if (bytesRead == 0) {
                         Log("SUSPICIOUS: ReadProcessMemory succeeded but returned 0 bytes at region: " + std::to_string((std::uintptr_t)mbi.BaseAddress));
                     } else {
-                        // جستجوی الگو داخل این صفحه از رم
                         for (size_t i = 0; i < bytesRead - patternBytes.size(); ++i) {
                             bool found = true;
                             for (size_t j = 0; j < patternBytes.size(); ++j) {
@@ -129,12 +124,8 @@ public:
                         }
                     }
                 } else {
-                    // اینجا مچ آنتی‌چیت گرفته میشه!
                     DWORD err = GetLastError();
-                    if (err == 299) { // ERROR_PARTIAL_COPY
-                        // این ارور یعنی آنتی چیت یک بایت خاص رو قفل کرده
-                        // Log("INFO: Partial read at region: " + std::to_string((std::uintptr_t)mbi.BaseAddress) + " (Likely Anti-Cheat Page Guarding)");
-                    } else {
+                    if (err != 299) { 
                         Log("WARNING: RPM Failed at region: " + std::to_string((std::uintptr_t)mbi.BaseAddress) + ". Error Code: " + std::to_string(err));
                     }
                 }
@@ -146,7 +137,6 @@ public:
         return 0;
     }
 
-    // متدهای استاندارد خوندن رم
     template <typename T>
     const T Read(const std::uintptr_t address) const noexcept
     {
@@ -155,11 +145,35 @@ public:
         return value;
     }
 
-    // بازنویسی تابع قدیمی برای سازگاری موقت و لاگ‌گیری
+    // ==========================================
+    // توابع گم‌شده که برای فایل main.cpp حیاتی هستند برگردانده شدند
+    // ==========================================
+
+    bool ReadModuleMemory(std::string_view moduleName, void* buffer, size_t size) const noexcept
+    {
+        std::uintptr_t moduleBase = GetModuleAddress(moduleName);
+        if (moduleBase == 0) return false;
+        return ::ReadProcessMemory(processHandle, reinterpret_cast<const void*>(moduleBase), buffer, size, nullptr) != 0;
+    }
+
+    bool ReadHugeMemory(std::uintptr_t moduleBase, void* buffer, size_t size) const noexcept
+    {
+        if (moduleBase == 0) return false;
+        return ::ReadProcessMemory(processHandle, reinterpret_cast<const void*>(moduleBase), buffer, size, nullptr) != 0;
+    }
+
+    template <typename T>
+    const T ReadModuleBuffer(const std::uintptr_t address) const noexcept
+    {
+        T value = { };
+        ::ReadProcessMemory(processHandle, reinterpret_cast<const void*>(address), &value, sizeof(T), NULL);
+        return value;
+    }
+
     std::uintptr_t GetModuleAddress(std::string_view moduleName) const noexcept
     {
         Log("ATTEMPT: main.cpp requested Module Address for: " + std::string(moduleName));
         Log("INFO: Returning 0 to force bypass of Windows PEB and move to Pattern Scanning.");
-        return 0; // ما عمداً 0 برمی‌گردونیم تا روش قدیمی غیرفعال بشه
+        return 0; 
     }
 };
