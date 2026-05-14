@@ -9,6 +9,7 @@
 #include <string>
 #include <iostream>
 #include <cmath>
+#include <math.h>
 #include <vector>
 #include <cstring>
 
@@ -104,9 +105,7 @@ void OffsetsUpdate() {
                     float playerZ = memory_ptr->ReadModuleBuffer<float>(reinterpret_cast<std::uintptr_t>(entityListBuffer) + i * 0x0250 + 0x018C);
 
                     Vector3 TargetPos = { playerX , playerY , playerZ };
-                    
-                    // FIX: Pass explicit pointer to float to bypass MSVC bug
-                    WorldToScreen(TargetPos, &screenPositionTemp);
+                    WorldToScreen(TargetPos, screenPositionTemp);
 
                     if (def_models) {
                         uintptr_t modelAddress = i * 0x0250 + 0x012C;
@@ -130,11 +129,7 @@ void OffsetsUpdate() {
                                 model.find("arctic") != std::string::npos ||
                                 model.find("guerilla") != std::string::npos))) {
                             
-                            // FIX: Avoid initializer list assignment
-                            players[i].screenPosition = 0.0f;
-                            players[i].screenPosition = 0.0f;
-                            players[i].state = 0.0f;
-                            players[i].dead = true;
+                            players[i] = { {0, 0}, 0 };
                             continue;
                         }
                     }
@@ -180,8 +175,8 @@ void DeadCheck() {
 
                     if (stateTemp == players[i].state) {
                         if (!players[i].dead) {
-                            players[i].screenPosition = 0.0f;
-                            players[i].screenPosition = 0.0f;
+                            players[i].screenPosition = 0;
+                            players[i].screenPosition = 0;
                             players[i].dead = true;
                         }
                         players[i].state = stateTemp;
@@ -224,8 +219,8 @@ void Draw() {
         if (enemy_box || enemy_name) {
             for (int i = 0; i < 64; i++)
             {
-                int x = static_cast<int>(players[i].screenPosition);
-                int y = static_cast<int>(players[i].screenPosition);
+                int x = players[i].screenPosition;
+                int y = players[i].screenPosition;
 
                 if (players[i].dead || y < 5 || x < 5) continue;
 
@@ -264,22 +259,18 @@ void DrawMenu() {
     if (ImGui::BeginPopup("Box Color")) {
         ImGui::PushItemWidth(100);
         ImGui::ColorPicker3("Box", boxTemp);
-        // FIX: Pointer casting to bypass MSVC array bug
-        float* b = (float*)boxTemp;
-        BoxColor.R = static_cast<int>(b * 255);
-        BoxColor.G = static_cast<int>(b * 255);
-        BoxColor.B = static_cast<int>(b * 255);
+        BoxColor.R = static_cast<int>(boxTemp * 255);
+        BoxColor.G = static_cast<int>(boxTemp * 255);
+        BoxColor.B = static_cast<int>(boxTemp * 255);
         BoxColor.A = 255;
         ImGui::EndPopup();
     }
     if (ImGui::BeginPopup("Name Color")) {
         ImGui::PushItemWidth(100);
         ImGui::ColorPicker3("Name", nameTemp);
-        // FIX: Pointer casting
-        float* n = (float*)nameTemp;
-        NameColor.R = static_cast<int>(n * 255);
-        NameColor.G = static_cast<int>(n * 255);
-        NameColor.B = static_cast<int>(n * 255);
+        NameColor.R = static_cast<int>(nameTemp * 255);
+        NameColor.G = static_cast<int>(nameTemp * 255);
+        NameColor.B = static_cast<int>(nameTemp * 255);
         NameColor.A = 255;
         ImGui::EndPopup();
     }
@@ -370,19 +361,13 @@ void MainLoop() {
         io.MousePos.y = TempPoint2.y - TempPoint.y;
 
         if (GetAsyncKeyState(0x1)) {
-            // FIX: Isolate bool arrays
-            bool* md = (bool*)io.MouseDown;
-            md = true;
-            
-            bool* mc = (bool*)io.MouseClicked;
-            mc = true;
-            
+            io.MouseDown = true;
+            io.MouseClicked = true;
             io.MouseClickedPos.x = io.MousePos.x;
             io.MouseClickedPos.y = io.MousePos.y;
         }
         else {
-            bool* md = (bool*)io.MouseDown;
-            md = false;
+            io.MouseDown = false;
         }
 
         if (TempRect.left != OldRect.left || TempRect.right != OldRect.right || TempRect.top != OldRect.top || TempRect.bottom != OldRect.bottom) {
