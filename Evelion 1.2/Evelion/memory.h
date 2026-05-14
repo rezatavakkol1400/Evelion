@@ -8,7 +8,6 @@
 #include <fstream>
 #include <iomanip>
 #include <sstream>
-#include <cstdio> // اضافه شدن برای حل مشکل لاگر
 
 class Memory
 {
@@ -17,15 +16,20 @@ private:
     HANDLE processHandle = nullptr;
     std::ofstream logFile;
 
-    // سیستم لاگ‌نویسی پیشرفته با سینتکس ایمن مایکروسافت
+    // Use std::ostringstream to safely format the time, avoiding sprintf_s compiler errors
     void Log(const std::string& message) const {
         if (logFile.is_open()) {
             SYSTEMTIME st;
             GetLocalTime(&st);
-            char timeBuf;
-            // حل ارور امنیتی رشته‌ها در MSVC
-            sprintf_s(timeBuf, sizeof(timeBuf), "[%02d:%02d:%02d.%03d] ", st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
-            const_cast<std::ofstream&>(logFile) << timeBuf << message << std::endl;
+            
+            std::ostringstream timeStream;
+            timeStream << "[" 
+                       << std::setfill('0') << std::setw(2) << st.wHour << ":"
+                       << std::setfill('0') << std::setw(2) << st.wMinute << ":"
+                       << std::setfill('0') << std::setw(2) << st.wSecond << "."
+                       << std::setfill('0') << std::setw(3) << st.wMilliseconds << "] ";
+                       
+            const_cast<std::ofstream&>(logFile) << timeStream.str() << message << std::endl;
             const_cast<std::ofstream&>(logFile).flush();
         }
     }
@@ -41,25 +45,27 @@ public:
         const HANDLE snapShot = ::CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
 
         bool found = false;
-        while (::Process32Next(snapShot, &entry))
-        {
-            if (!processName.compare(entry.szExeFile))
+        if (snapShot != INVALID_HANDLE_VALUE) {
+            while (::Process32Next(snapShot, &entry))
             {
-                processId = entry.th32ProcessID;
-                processHandle = ::OpenProcess(PROCESS_ALL_ACCESS, FALSE, processId);
-                
-                if (processHandle) {
-                    Log("SUCCESS: Attached to " + std::string(processName) + " (PID: " + std::to_string(processId) + ")");
-                } else {
-                    Log("FATAL: Found process, but OpenProcess failed! Anti-Cheat is actively blocking handle creation. Error Code: " + std::to_string(GetLastError()));
+                if (!processName.compare(entry.szExeFile))
+                {
+                    processId = entry.th32ProcessID;
+                    processHandle = ::OpenProcess(PROCESS_ALL_ACCESS, FALSE, processId);
+                    
+                    if (processHandle) {
+                        Log("SUCCESS: Attached to " + std::string(processName) + " (PID: " + std::to_string(processId) + ")");
+                    } else {
+                        Log("FATAL: Found process, but OpenProcess failed! Anti-Cheat is actively blocking handle creation. Error Code: " + std::to_string(GetLastError()));
+                    }
+                    found = true;
+                    break;
                 }
-                found = true;
-                break;
             }
+            ::CloseHandle(snapShot);
         }
 
         if (!found) Log("ERROR: Process " + std::string(processName) + " not found in Windows Process List.");
-        if (snapShot) ::CloseHandle(snapShot);
     }
 
     ~Memory()
@@ -147,7 +153,7 @@ public:
     }
 
     // ==========================================
-    // توابع حیاتی و Overload شده برای جلوگیری از ارور C2672
+    // Core Functions needed by main.cpp
     // ==========================================
 
     bool ReadModuleMemory(std::string_view moduleName, void* buffer, size_t size) const noexcept
@@ -163,35 +169,12 @@ public:
         return ::ReadProcessMemory(processHandle, reinterpret_cast<const void*>(moduleBase), buffer, size, nullptr) != 0;
     }
 
-    // حالت اول: فقط آدرس داده شود
+    // Generic ReadModuleBuffer matching the expected signature in Evelion
     template <typename T>
-    const T ReadModuleBuffer(const std::uintptr_t address) const noexcept
+    const T ReadModuleBuffer(std::uintptr_t address) const noexcept
     {
         T value = { };
         ::ReadProcessMemory(processHandle, reinterpret_cast<const void*>(address), &value, sizeof(T), NULL);
-        return value;
-    }
-
-    // حالت دوم: آدرس پایه و آفست داده شود
-    template <typename T>
-    const T ReadModuleBuffer(const std::uintptr_t base, const std::uintptr_t offset) const noexcept
-    {
-        T value = { };
-        if (base) {
-            ::ReadProcessMemory(processHandle, reinterpret_cast<const void*>(base + offset), &value, sizeof(T), NULL);
-        }
-        return value;
-    }
-
-    // حالت سوم: اسم ماژول و آفست داده شود
-    template <typename T>
-    const T ReadModuleBuffer(std::string_view moduleName, const std::uintptr_t offset) const noexcept
-    {
-        T value = { };
-        std::uintptr_t base = GetModuleAddress(moduleName);
-        if (base) {
-            ::ReadProcessMemory(processHandle, reinterpret_cast<const void*>(base + offset), &value, sizeof(T), NULL);
-        }
         return value;
     }
 
