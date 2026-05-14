@@ -16,8 +16,6 @@
 
 // initialization
 // ==============
-// initialization0000
-// ==============
 const auto memory = Memory{ "hl.exe" };
 
 // تابع اسکن معکوس همراه با سیستم هندل کردن ارور داخلی
@@ -60,7 +58,7 @@ void* entityListBuffer = malloc(entityListSize);
 HWND hwnd1;
 int id = GetWindowThreadProcessId(hwnd1, &Game::PID);
 // ==============
-// end of initialization0000
+// end of initialization
 
 size_t viewMatrixSize = 0x40;
 void* viewMatrixBuffer = malloc(viewMatrixSize);
